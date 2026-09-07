@@ -1,7 +1,6 @@
 fastapi
 uvicorn
 python-multipart
-openai-whisper
 gTTS
 scikit-learn
 spacy
@@ -11,3 +10,5 @@ pydantic
 PyJWT
 requests
 python-dotenv
+vosk
+pydub
