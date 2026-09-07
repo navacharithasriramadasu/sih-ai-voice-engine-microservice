@@ -8,3 +8,6 @@ spacy
 joblib
 numpy
 pydantic
+PyJWT
+requests
+python-dotenv
