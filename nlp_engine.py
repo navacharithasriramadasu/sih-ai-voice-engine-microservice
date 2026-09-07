@@ -18,6 +18,9 @@ class CustomNLPEngine:
         # Simple Dictionary/Regex for Custom Agricultural NER
         # In a larger app, we would train a custom spaCy NER component
         self.known_crops = ["tomato", "onion", "wheat", "rice", "tamatar", "pyaz"]
+        
+        # Dialogue State Tracking memory store
+        self.user_sessions = {}
 
     def extract_entities(self, text: str):
         text_lower = text.lower()
@@ -48,6 +51,43 @@ class CustomNLPEngine:
         intent = self.predict_intent(text)
         entities = self.extract_entities(text)
         
+        # 1. State Tracking (Slot Filling)
+        session = self.user_sessions.get(user_id, {})
+        
+        # If the AI previously asked for quantity, assume the user is answering it
+        if session.get("awaiting") == "quantity":
+            if entities["quantity"] or re.search(r'\d+', text):
+                # Extract number even if they just said "50"
+                if not entities["quantity"]:
+                    qty_match = re.search(r'\d+', text)
+                    if qty_match: entities["quantity"] = qty_match.group(0) + " kg"
+                
+                # Restore context
+                intent = session.get("intent", "sell_produce")
+                entities["crop"] = session.get("crop")
+                self.user_sessions[user_id] = {} # Clear state
+                
+        # 2. Registration Intent (Regex Heuristic)
+        name_match = re.search(r'(my name is|i am|this is)\s+([a-zA-Z\s]+)', text.lower())
+        if name_match or session.get("awaiting") == "name":
+            # If they just said their name, or said "My name is X"
+            name = name_match.group(2).strip().title() if name_match else text.strip().title()
+            
+            # Make HTTP Request to NestJS to update profile
+            payload = {
+                "farmer_id": user_id,
+                "full_name": name
+            }
+            try:
+                BACKEND_URL = os.getenv("NESTJS_BACKEND_URL", "http://localhost:3000")
+                response = requests.patch(f"{BACKEND_URL}/api/v1/users/profile", json=payload, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+                if response.status_code in [200, 201]:
+                    self.user_sessions[user_id] = {} # Clear state
+                    return f"Thank you {name}, your registration is complete."
+            except Exception as e:
+                print(f"Backend Error: {e}")
+                return "I heard your name, but couldn't save it to the database."
+        
         print(f"[{user_id}] Intent: {intent} | Entities: {entities}")
 
         headers = {
@@ -61,8 +101,10 @@ class CustomNLPEngine:
         # Dialogue State Routing & Backend Integration
         if intent == "sell_produce":
             if not entities["crop"]:
+                self.user_sessions[user_id] = {"intent": "sell_produce", "awaiting": "crop"}
                 return "Which crop would you like to sell?"
             if not entities["quantity"]:
+                self.user_sessions[user_id] = {"intent": "sell_produce", "awaiting": "quantity", "crop": entities["crop"]}
                 return f"How much {entities['crop']} do you want to sell? Please specify in kg or quintal."
                 
             qty_num = int(re.search(r'\d+', entities["quantity"]).group())
